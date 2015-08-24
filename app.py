@@ -1,9 +1,9 @@
 #!flask/bin/python
 from flask import Flask, jsonify, g, abort, make_response, request
-#from flask.ext.sqlalchemy import SQLAlchemy
 from flask.ext.httpauth import HTTPBasicAuth
 from flask.ext.sqlalchemy import SQLAlchemy
 from passlib.apps import custom_app_context as pwd_context
+from itsdangerous import (TimedJSONWebSignatureSerializer as Serializer, BadSignature, SignatureExpired)
 import argparse, time
 import os
 import json
@@ -11,7 +11,7 @@ import re
 import sqlite3
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql://root:openflow#@localhost/sdn'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:openflow@localhost/isp'
 app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 app.config['SECRET_KEY'] = 'some secret key for hashing'
 
@@ -22,14 +22,17 @@ controller_ip = '149.171.189.1'     #IP address of SDN controller
 
 class User(db.Model):
     __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customer.id'))
+    subscriber_id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customers.customer_id'))
 
 class Customer(db.Model):
     __tablename__ = 'customers'
-    id = db.Column(db.Integer, primary_key=True)
-    switch_id = db.Column(db.String(23))
+    customer_id = db.Column(db.Integer, primary_key=True)
+    switch_id = db.Column(db.String(30))
+    port = db.Column(db.String(3))
+    rel = db.relationship('User', uselist=False, backref='customers', foreign_keys="User.customer_id")
     
+
 class SMP(db.Model):
     __tablename__ = 'smp'
     id = db.Column(db.Integer, primary_key = True)
@@ -59,7 +62,7 @@ class SMP(db.Model):
         return smp
 
 @auth.verify_password
-def verify_password(username_or_token)
+def verify_password(username_or_token, password):
     smp = SMP.verify_auth_token(username_or_token)
     if not smp:
         #try to authenticate with username/password
@@ -68,35 +71,46 @@ def verify_password(username_or_token)
             return False
     g.smp = smp
     return True
-        
+ 
+ ############### SMP AUTHENTICATION #############################   
+@app.route('/residence/isp/api/v1.0/smp/register', methods=['POST'])
+def register_smp():
+    username = request.json.get('username')
+    password = request.json.get('password')
+    if username is None or password is None:
+        abort(400) #missing arguments
+    if SMP.query.filter_by(username=username).first() is not None:
+        abort(400)
+    user = SMP(username=username)
+    user.hash_password(password)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({'username':user.username}), 201
+
+@app.route('/residence/isp/api/v1.0/smp/token', methods=['GET'])
+@auth.login_required
+def get_auth_token():
+    token = g.smp.generate_auth_token()
+    return jsonify({'token':token.decode('ascii')})
+
 ################ SUBSCRIBER REGISTRATION ######################
-@app.route('/register', methods=['POST'])
+@app.route('/residence/isp/api/v1.0/register', methods=['POST'])
 def create_user():
-    db = sqlite3.connect('users.db')
-    c = db.cursor()
     if not request.json or not 'customer_id' in request.json:
         abort(400)
-    table_entry = (request.json['subscriber_id'], request.json['customer_id'])
-    c.execute('INSERT INTO users VALUES (?,?)', table_entry)
-    db.commit()
-    db.close()
-    #print request.json['subscriber_id']
-    #print request.json['customer_id']
+    user = User(subscriber_id=request.json['subscriber_id'],customer_id=request.json['customer_id'])
+    db.session.add(user)
+    db.session.commit()
     user = {
             'customer_id': request.json['customer_id'],
             'subscriber_id': request.json['subscriber_id']
     }
     return jsonify({'user': user}), 201
     
-@app.route('/register/<int:cust_id>', methods=['GET'])
+@app.route('/residence/isp/api/v1.0/register/<int:cust_id>', methods=['GET'])
+#@auth.login_required
 def check_cust_id(cust_id):
-    db = sqlite3.connect('users.db')
-    c = db.cursor()
-    #check for customers in db
-    c.execute('SELECT * FROM customers where customer_id = ?', (cust_id,))
-    customer = c.fetchall()
-    db.close()
-    #print cust_id
+    customer = Customer.query.filter_by(customer_id=cust_id).first()
     if not customer:
         result = "false"
     else:
@@ -106,25 +120,25 @@ def check_cust_id(cust_id):
     return response
 
 ############# DEVICE DISCOVERY ###########################
-@app.route('/devices/<int:subs_id>/', methods=['GET'])
+@app.route('/residence/isp/api/v1.0/devices/<int:subs_id>/', methods=['GET'])
 def get_devices(subs_id):
-
     #command to get devices
-    command = "curl -i http://%s:8080/wm/device/" % (controller_ip)
+    command = "curl http://%s:8080/wm/device/" % (controller_ip)
     result = os.popen(command).read()
-    result = re.sub(r".*chunked", '',result,count=1, flags=re.DOTALL)
     devices = json.loads(result)
-    db = sqlite3.connect('users.db')
-    for switch_tuple in db.execute('SELECT * FROM users join customers on users.customer_id = customers.customer_id WHERE subscriber_id = ?', (subs_id,)):
-        print switch_tuple
-    #switch_tuple = db.fetchone()
-    db.close()
+    switch_tuple = User.query.filter_by(subscriber_id=subs_id).\
+                   join(Customer, User.customer_id==Customer.customer_id).\
+                   add_columns(User.subscriber_id, Customer.switch_id, Customer.port).\
+                   first()
     matched_devices = []
     if not switch_tuple:
         abort(404)
+    print switch_tuple
     for device in devices:
-        if str(device['attachmentPoint'][0]['switchDPID']) == str(switch_tuple[3]):
-            if str(device['attachmentPoint'][0]['port']) == str(switch_tuple[4]):
+        if not device ['attachmentPoint']:
+            continue
+        if str(device['attachmentPoint'][0]['switchDPID']) == str(switch_tuple.switch_id):
+            if str(device['attachmentPoint'][0]['port']) == str(switch_tuple.port):
                 add_device = device
                 del add_device['attachmentPoint']
                 del add_device['entityClass']
@@ -132,17 +146,15 @@ def get_devices(subs_id):
                 matched_devices.append(add_device) 
     return make_response(json.dumps(matched_devices))
     
-################## USAGE ###############################
-    
-@app.route('/usage/<int:subs_id>', methods=['POST']) 
+################## USAGE ###############################   
+@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>', methods=['POST']) 
 def set_usage_on_device(subs_id):   #adds flow to monitor usage on a device
-    db = sqlite3.connect('users.db')
-    c = db.cursor()
     #get switch id for customer in db
-    c.execute('SELECT * FROM users join customers on users.customer_id = customers.customer_id WHERE subscriber_id = ?', (subs_id,))
-    customer = c.fetchone()
-    db.close()
-    switch_id = customer[3]
+    db_entry = User.query.filter_by(subscriber_id=subs_id).\
+                   join(Customer, User.customer_id==Customer.customer_id).\
+                   add_columns(User.subscriber_id, Customer.switch_id).\
+                   first()
+    switch_id = db_entry.switch_id
     mac = request.json['mac']
     #pushing permanent flows onto switch
     command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"0\", \"actions\":\"output=normal\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
@@ -153,7 +165,7 @@ def set_usage_on_device(subs_id):   #adds flow to monitor usage on a device
     #print result
     return result
     
-@app.route('/usage/<int:subs_id>', methods=['DELETE'])
+@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>', methods=['DELETE'])
 def delete_usage_on_device(subs_id): #deletes flow to monitor usage on a device
     mac = request.json['mac']
     command = "curl -X DELETE -d '{\"name\":\"%s-dl\"}' http://%s:8080/wm/staticflowentrypusher/json" % (mac, controller_ip)
@@ -162,21 +174,13 @@ def delete_usage_on_device(subs_id): #deletes flow to monitor usage on a device
     result = os.popen(command).read()
     return result
     
-@app.route('/usage/<int:subs_id>', methods=['PUT']) 
-def reset_usage_device(subs_id):   #resets flow byte counters for a device
-    command = "curl http://%s:8080/wm/device/" % (controller_ip)
-    result = os.popen(command).read()
-    return result
-    
-@app.route('/usage/<int:subs_id>/<mac>', methods=['GET'])
+@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>/<mac>', methods=['GET'])
 def get_usage_device(subs_id, mac): #gets usage on a device
-    db = sqlite3.connect('users.db')
-    c = db.cursor()
-    #get switch id for customer in db
-    c.execute('SELECT * FROM users join customers on users.customer_id = customers.customer_id WHERE subscriber_id = ?', (subs_id,))
-    customer = c.fetchone()
-    db.close()
-    switch_id = customer[3]
+    db_entry = User.query.filter_by(subscriber_id=subs_id).\
+                   join(Customer, User.customer_id==Customer.customer_id).\
+                   add_columns(User.subscriber_id, Customer.switch_id).\
+                   first()
+    switch_id = db_entry.switch_id
     command = "curl http://%s:8080/wm/core/switch/%s/flow/json" % (controller_ip, switch_id)
     result = os.popen(command).read()
     flows = json.loads(result)
@@ -191,7 +195,7 @@ def get_usage_device(subs_id, mac): #gets usage on a device
     }
     return make_response(jsonify({'usage': usage}), 200)
     
-@app.route('/usage/limit/<int:subs_id>', methods=['GET']) 
+@app.route('/residence/isp/api/v1.0/usage/limit/<int:subs_id>', methods=['GET']) 
 def get_limit(subs_id):   #get flow byte counter overflow limit
     return make_response(jsonify({'limit':32}), 200)
  
