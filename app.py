@@ -37,7 +37,7 @@ class SMP(db.Model):
     __tablename__ = 'smp'
     id = db.Column(db.Integer, primary_key = True)
     username = db.Column(db.String(32), index=True)
-    password_hash = db.Column(db.String(64))
+    password_hash = db.Column(db.String(120))
     
     def hash_password(self,password):
         self.password_hash = pwd_context.encrypt(password)
@@ -206,5 +206,5 @@ def not_found(error):
 
 ################ RUN TIME ####################################
 if __name__ == '__main__':
-    app.run(debug=True)
-    #app.run(host='0.0.0.0')
+    #app.run(debug=True)
+    app.run(host='0.0.0.0')

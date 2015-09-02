@@ -1,12 +1,7 @@
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS smp;
 
-create table users (
-	subscriber_id integer,
-	customer_id integer,
-	primary key (subscriber_id),
-	FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-);
 
 create table customers (
     customer_id integer,
@@ -15,10 +10,17 @@ create table customers (
     primary key (customer_id)
 );
 
+create table users (
+	subscriber_id integer,
+	customer_id integer,
+	primary key (subscriber_id),
+	FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
+);
+
 create table smp (
 	id integer,
     username varchar(32),
-    password_hash varchar(64),
+    password_hash varchar(120),
     primary key (id)
 );
 
