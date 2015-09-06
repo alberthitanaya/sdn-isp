@@ -22,14 +22,16 @@ controller_ip = '149.171.189.1'     #IP address of SDN controller
 
 class User(db.Model):
     __tablename__ = 'users'
-    subscriber_id = db.Column(db.Integer, primary_key=True)
-    customer_id = db.Column(db.Integer, db.ForeignKey('customers.customer_id'))
+    handle = db.Column(db.String(30), primary_key=True)
+    customer_id = db.Column(db.String(30), db.ForeignKey('customers.customer_id'))
 
 class Customer(db.Model):
     __tablename__ = 'customers'
-    customer_id = db.Column(db.Integer, primary_key=True)
+    customer_id = db.Column(db.String(30), primary_key=True)
     switch_id = db.Column(db.String(30))
     port = db.Column(db.String(3))
+    billingDay = db.Column(db.Integer)
+    quota = db.Column(db.Integer)
     rel = db.relationship('User', uselist=False, backref='customers', foreign_keys="User.customer_id")
     
 
@@ -94,11 +96,12 @@ def get_auth_token():
     return jsonify({'token':token.decode('ascii')})
 
 ################ SUBSCRIBER REGISTRATION ######################
+'''
 @app.route('/residence/isp/api/v1.0/register', methods=['POST'])
 def create_user():
     if not request.json or not 'customer_id' in request.json:
         abort(400)
-    user = User(subscriber_id=request.json['subscriber_id'],customer_id=request.json['customer_id'])
+    user = User(handle=request.json['handle'],customer_id=request.json['customer_id'])
     db.session.add(user)
     db.session.commit()
     user = {
@@ -106,29 +109,49 @@ def create_user():
             'subscriber_id': request.json['subscriber_id']
     }
     return jsonify({'user': user}), 201
-    
-@app.route('/residence/isp/api/v1.0/register/<int:cust_id>', methods=['GET'])
+'''
+
+@app.route('/residence/isp/api/v1.0/register/<cust_id>', methods=['GET'])
 #@auth.login_required
 def check_cust_id(cust_id):
     customer = Customer.query.filter_by(customer_id=cust_id).first()
     if not customer:
-        result = "false"
+        response = make_response(jsonify({'error':'No customer found'}), 400)
     else:
-        result = "true"
-    response = make_response(jsonify({'result':result}))
+        customer_row = Customer.query.filter_by(customer_id=cust_id).\
+                   join(User, User.customer_id==Customer.customer_id).\
+                   add_columns(User.handle, Customer.billingDay, Customer.quota).\
+                   first()
+        if not customer_row:
+            result = User.query.order_by(User.handle).all()
+            last = result[-1]
+            number = last.handle[-1]
+            number = int(number) + 1
+            handle = "albert-" + str(number)
+            user = {
+                'handle' : handle,
+                'billingDay' : customer_row.billingDay,
+                'quota' : customer_row.quota
+            }
+            user_entry = User(handle=handle,customer_id=cust_id)
+            db.session.add(user_entry)
+            db.session.commit()
+            response = make_response(jsonify(user))
+        else:
+            response = make_response(jsonify({'error':'User already in database'}), 400)
     response.headers['Connection'] = 'Keep-Alive'
     return response
 
 ############# DEVICE DISCOVERY ###########################
-@app.route('/residence/isp/api/v1.0/devices/<int:subs_id>/', methods=['GET'])
-def get_devices(subs_id):
+@app.route('/residence/isp/api/v1.0/devices/<handle>/', methods=['GET'])
+def get_devices(handle):
     #command to get devices
     command = "curl http://%s:8080/wm/device/" % (controller_ip)
     result = os.popen(command).read()
     devices = json.loads(result)
-    switch_tuple = User.query.filter_by(subscriber_id=subs_id).\
+    switch_tuple = User.query.filter_by(handle=handle).\
                    join(Customer, User.customer_id==Customer.customer_id).\
-                   add_columns(User.subscriber_id, Customer.switch_id, Customer.port).\
+                   add_columns(User.handle, Customer.switch_id, Customer.port).\
                    first()
     matched_devices = []
     if not switch_tuple:
@@ -147,12 +170,12 @@ def get_devices(subs_id):
     return make_response(json.dumps(matched_devices))
     
 ################## USAGE ###############################   
-@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>', methods=['POST']) 
-def set_usage_on_device(subs_id):   #adds flow to monitor usage on a device
+@app.route('/residence/isp/api/v1.0/usage/<handle>', methods=['POST']) 
+def set_usage_on_device(handle):   #adds flow to monitor usage on a device
     #get switch id for customer in db
-    db_entry = User.query.filter_by(subscriber_id=subs_id).\
+    db_entry = User.query.filter_by(handle=handle).\
                    join(Customer, User.customer_id==Customer.customer_id).\
-                   add_columns(User.subscriber_id, Customer.switch_id).\
+                   add_columns(User.handle, Customer.switch_id).\
                    first()
     switch_id = db_entry.switch_id
     mac = request.json['mac']
@@ -165,8 +188,8 @@ def set_usage_on_device(subs_id):   #adds flow to monitor usage on a device
     #print result
     return result
     
-@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>', methods=['DELETE'])
-def delete_usage_on_device(subs_id): #deletes flow to monitor usage on a device
+@app.route('/residence/isp/api/v1.0/usage/', methods=['DELETE'])
+def delete_usage_on_device(): #deletes flow to monitor usage on a device
     mac = request.json['mac']
     command = "curl -X DELETE -d '{\"name\":\"%s-dl\"}' http://%s:8080/wm/staticflowentrypusher/json" % (mac, controller_ip)
     result = os.popen(command).read()
@@ -174,11 +197,11 @@ def delete_usage_on_device(subs_id): #deletes flow to monitor usage on a device
     result = os.popen(command).read()
     return result
     
-@app.route('/residence/isp/api/v1.0/usage/<int:subs_id>/<mac>', methods=['GET'])
-def get_usage_device(subs_id, mac): #gets usage on a device
-    db_entry = User.query.filter_by(subscriber_id=subs_id).\
+@app.route('/residence/isp/api/v1.0/usage/<handle>/<mac>', methods=['GET'])
+def get_usage_device(handle, mac): #gets usage on a device
+    db_entry = User.query.filter_by(handle=handle).\
                    join(Customer, User.customer_id==Customer.customer_id).\
-                   add_columns(User.subscriber_id, Customer.switch_id).\
+                   add_columns(User.handle, Customer.switch_id).\
                    first()
     switch_id = db_entry.switch_id
     command = "curl http://%s:8080/wm/core/switch/%s/flow/json" % (controller_ip, switch_id)
@@ -195,10 +218,6 @@ def get_usage_device(subs_id, mac): #gets usage on a device
     }
     return make_response(jsonify({'usage': usage}), 200)
     
-@app.route('/residence/isp/api/v1.0/usage/limit/<int:subs_id>', methods=['GET']) 
-def get_limit(subs_id):   #get flow byte counter overflow limit
-    return make_response(jsonify({'limit':32}), 200)
- 
 ################# ERROR HANDLING ##############################
 @app.errorhandler(404)
 def not_found(error):
@@ -206,5 +225,5 @@ def not_found(error):
 
 ################ RUN TIME ####################################
 if __name__ == '__main__':
-    #app.run(debug=True)
-    app.run(host='0.0.0.0')
+    app.run(debug=True)
+    #app.run(host='0.0.0.0')
