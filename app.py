@@ -119,10 +119,10 @@ def check_cust_id(cust_id):
         response = make_response(jsonify({'error':'No customer found'}), 400)
     else:
         customer_row = Customer.query.filter_by(customer_id=cust_id).\
-                   join(User, User.customer_id==Customer.customer_id).\
+                   outerjoin(User, User.customer_id==Customer.customer_id).\
                    add_columns(User.handle, Customer.billingDay, Customer.quota).\
                    first()
-        if not customer_row:
+        if not customer_row.handle:     #if no handle created yet
             result = User.query.order_by(User.handle).all()
             if not result:      #if no users in the database yet
                 number = 1
@@ -130,11 +130,11 @@ def check_cust_id(cust_id):
                 last = result[-1]
                 number = last.handle[-1]
                 number = int(number) + 1
-            handle = "albert-" + str(number)
+            handle = "albert_" + str(number)
             user = {
                 'handle' : handle,
-                'billingDay' : customer_row.billingDay,
-                'quota' : customer_row.quota
+                'quota' : customer_row.quota,
+                'billingDay' : customer_row.billingDay
             }
             user_entry = User(handle=handle,customer_id=cust_id)
             db.session.add(user_entry)
