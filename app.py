@@ -124,9 +124,12 @@ def check_cust_id(cust_id):
                    first()
         if not customer_row:
             result = User.query.order_by(User.handle).all()
-            last = result[-1]
-            number = last.handle[-1]
-            number = int(number) + 1
+            if not result:      #if no users in the database yet
+                number = 1
+            else:
+                last = result[-1]
+                number = last.handle[-1]
+                number = int(number) + 1
             handle = "albert-" + str(number)
             user = {
                 'handle' : handle,
