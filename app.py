@@ -74,6 +74,11 @@ def verify_password(username_or_token, password):
     g.smp = smp
     return True
  
+ ################ RUN TIME ####################################
+if __name__ == '__main__':
+    app.run(debug=True)
+    #app.run(host='0.0.0.0')
+
  ############### SMP AUTHENTICATION #############################   
 @app.route('/residence/isp/api/v1.0/smp/register', methods=['POST'])
 def register_smp():
@@ -95,22 +100,35 @@ def get_auth_token():
     token = g.smp.generate_auth_token()
     return jsonify({'token':token.decode('ascii')})
 
-################ SUBSCRIBER REGISTRATION ######################
-'''
-@app.route('/residence/isp/api/v1.0/register', methods=['POST'])
-def create_user():
-    if not request.json or not 'customer_id' in request.json:
-        abort(400)
-    user = User(handle=request.json['handle'],customer_id=request.json['customer_id'])
-    db.session.add(user)
-    db.session.commit()
-    user = {
-            'customer_id': request.json['customer_id'],
-            'subscriber_id': request.json['subscriber_id']
-    }
-    return jsonify({'user': user}), 201
-'''
+################ FIREWALL ##################################### 
+@app.route('/residence/isp/api/v1.0/block/<handle>', methods=['POST']) 
+def set_block_on_device(handle):   #adds flow to monitor usage on a device
+    #get switch id for customer in db
+    db_entry = User.query.filter_by(handle=handle).\
+                   join(Customer, User.customer_id==Customer.customer_id).\
+                   add_columns(User.handle, Customer.switch_id).\
+                   first()
+    switch_id = db_entry.switch_id
+    mac = request.json['mac']
+    #pushing permanent flows onto switch
+    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-blockul\", \"src-mac\":\"%s\", \"active\":\"true\", \"priority\":\"0\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
+    result = os.popen(command).read()
+    #print command                          
+    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-blockdl\", \"dst-mac\":\"%s\", \"active\":\"true\", \"priority\":\"0\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
+    result = os.popen(command).read()
+    #print result
+    return result
 
+@app.route('/residence/isp/api/v1.0/block/', methods=['DELETE'])
+def delete_block_on_device(): #deletes flow to monitor usage on a device
+    mac = request.json['mac']
+    command = "curl -X DELETE -d '{\"name\":\"%s-blockdl\"}' http://%s:8080/wm/staticflowentrypusher/json" % (mac, controller_ip)
+    result = os.popen(command).read()
+    command = "curl -X DELETE -d '{\"name\":\"%s-blockul\"}' http://%s:8080/wm/staticflowentrypusher/json" % (mac, controller_ip)
+    result = os.popen(command).read()
+    return result
+
+################ SUBSCRIBER REGISTRATION ######################
 @app.route('/residence/isp/api/v1.0/register/<cust_id>', methods=['GET'])
 #@auth.login_required
 def check_cust_id(cust_id):
@@ -142,7 +160,7 @@ def check_cust_id(cust_id):
             response = make_response(jsonify(user))
         else:
             response = make_response(jsonify({'error':'User already in database'}), 400)
-    response.headers['Connection'] = 'Keep-Alive'
+    #response.headers['Connection'] = 'Keep-Alive'
     return response
 
 ############# DEVICE DISCOVERY ###########################
@@ -183,10 +201,10 @@ def set_usage_on_device(handle):   #adds flow to monitor usage on a device
     switch_id = db_entry.switch_id
     mac = request.json['mac']
     #pushing permanent flows onto switch
-    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"0\", \"actions\":\"output=normal\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
+    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"output=normal\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
     result = os.popen(command).read()
     #print command                          
-    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"0\", \"actions\":\"output=normal\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
+    command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"output=normal\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_id, mac, mac, controller_ip)
     result = os.popen(command).read()
     #print result
     return result
@@ -225,8 +243,3 @@ def get_usage_device(handle, mac): #gets usage on a device
 @app.errorhandler(404)
 def not_found(error):
     return make_response(jsonify({'error': 'Not found'}), 404)
-
-################ RUN TIME ####################################
-if __name__ == '__main__':
-    app.run(debug=True)
-    #app.run(host='0.0.0.0')
