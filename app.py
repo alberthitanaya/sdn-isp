@@ -73,11 +73,7 @@ def verify_password(username_or_token, password):
             return False
     g.smp = smp
     return True
- 
- ################ RUN TIME ####################################
-if __name__ == '__main__':
-    app.run(debug=True)
-    #app.run(host='0.0.0.0')
+
 
  ############### SMP AUTHENTICATION #############################   
 @app.route('/residence/isp/api/v1.0/smp/register', methods=['POST'])
@@ -119,7 +115,7 @@ def set_block_on_device(handle):   #adds flow to monitor usage on a device
     #print result
     return result
 
-@app.route('/residence/isp/api/v1.0/block/', methods=['DELETE'])
+@app.route('/residence/isp/api/v1.0/block', methods=['DELETE'])
 def delete_block_on_device(): #deletes flow to monitor usage on a device
     mac = request.json['mac']
     command = "curl -X DELETE -d '{\"name\":\"%s-blockdl\"}' http://%s:8080/wm/staticflowentrypusher/json" % (mac, controller_ip)
@@ -238,6 +234,11 @@ def get_usage_device(handle, mac): #gets usage on a device
             'upload': ul_usage
     }
     return make_response(jsonify({'usage': usage}), 200)
+
+ ################ RUN TIME ####################################
+if __name__ == '__main__':
+    app.run(debug=True)
+    #app.run(host='0.0.0.0')
     
 ################# ERROR HANDLING ##############################
 @app.errorhandler(404)
