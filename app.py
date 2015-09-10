@@ -173,17 +173,17 @@ def get_devices(handle):
     matched_devices = []
     if not switch_tuple:
         abort(404)
-    print switch_tuple
     for device in devices:
         if not device ['attachmentPoint']:
             continue
-        if str(device['attachmentPoint'][0]['switchDPID']) == str(switch_tuple.switch_id):
-            if str(device['attachmentPoint'][0]['port']) == str(switch_tuple.port):
-                add_device = device
-                del add_device['attachmentPoint']
-                del add_device['entityClass']
-                del add_device['vlan']
-                matched_devices.append(add_device) 
+        for switch in device['attachmentPoint']:
+            if str(switch['switchDPID']) == str(switch_tuple.switch_id):
+                if str(switch['port']) == str(switch_tuple.port):
+                    add_device = device
+                    del add_device['attachmentPoint']
+                    del add_device['entityClass']
+                    del add_device['vlan']
+                    matched_devices.append(add_device) 
     return make_response(json.dumps(matched_devices))
     
 ################## USAGE ###############################   
