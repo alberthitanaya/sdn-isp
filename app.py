@@ -231,7 +231,8 @@ def get_usage_device(handle, mac): #gets usage on a device
             ul_usage = flow['byteCount']
     usage = {
             'download': dl_usage,
-            'upload': ul_usage
+            'upload': ul_usage,
+            'timestamp':time.time()
     }
     return make_response(jsonify({'usage': usage}), 200)
 
