@@ -186,6 +186,24 @@ def get_devices(handle):
                     matched_devices.append(add_device) 
     return make_response(json.dumps(matched_devices))
     
+################## DOMAIN STATS ########################
+@app.route('/residence/isp/api/v1.0/domain', methods=['GET'])
+def get_domain_stats():
+    command = "curl http://%s:8080/wm/dnscollector/json" % (controller_ip)
+    result = os.popen(command).read()
+    domains = json.loads(result)
+    domains = [{"time":1445302744344,"query":"github.com","switch":"00:00:f8:d1:11:39:4a:76","mac":"00:ee:bd:7a:5c:4e"},{"time":1445302745392,"query":"assets-cdn.github.com","switch":"00:00:f8:d1:11:39:4a:76","mac":"00:ee:bd:7a:5c:4e"},{"time":1445302745647,"query":"camo.githubusercontent.com","switch":"00:00:f8:d1:11:39:4a:76","mac":"00:ee:bd:7a:5c:4e"}]
+    new_domains = []
+    for domain in domains:
+        customer_row = Customer.query.filter_by(switch_id=domain['switch']).\
+                   outerjoin(User, User.customer_id==Customer.customer_id).\
+                   add_columns(User.handle).\
+                   first()
+        del domain['switch']
+        domain['handle'] = customer_row.handle
+        new_domains.append(domain)
+    return make_response(json.dumps(new_domains))
+
 ################## USAGE ###############################   
 @app.route('/residence/isp/api/v1.0/usage/<handle>', methods=['POST']) 
 def set_usage_on_device(handle):   #adds flow to monitor usage on a device
