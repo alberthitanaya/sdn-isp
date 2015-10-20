@@ -238,8 +238,8 @@ def get_usage_device(handle, mac): #gets usage on a device
 
  ################ RUN TIME ####################################
 if __name__ == '__main__':
-    app.run(debug=True)
-    #app.run(host='0.0.0.0')
+    #app.run(debug=True)
+    app.run(host='0.0.0.0')
     
 ################# ERROR HANDLING ##############################
 @app.errorhandler(404)
