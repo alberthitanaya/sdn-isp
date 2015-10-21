@@ -8,6 +8,7 @@ import argparse, time
 import os
 import json
 import re
+import urllib3
 import sqlite3
 
 app = Flask(__name__)
@@ -193,6 +194,7 @@ def get_domain_stats():
     result = os.popen(command).read()
     domains = json.loads(result)
     new_domains = []
+    http = urllib3.PoolManager()
     for domain in domains:
         customer_row = Customer.query.filter_by(switch_id=domain['switch']).\
                    outerjoin(User, User.customer_id==Customer.customer_id).\
@@ -200,7 +202,18 @@ def get_domain_stats():
                    first()
         del domain['switch']
         domain['handle'] = customer_row.handle
-        new_domains.append(domain)
+        url = "https://domain.opendns.com/%s" % domain['query']
+        r = http.request('GET', url)
+        lines = r.data.split('\n')
+        print lines[156]
+        if "Tag" in str(lines[156]):
+            line = lines[158][:30]
+            line = re.sub(r'^\s+','',line)
+            del domain['query']
+            domain['category'] = line
+            new_domains.append(domain)
+        
+    #domain = "www.google.com"
     return make_response(json.dumps(new_domains))
 
 ################## USAGE ###############################   
