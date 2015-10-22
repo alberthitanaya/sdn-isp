@@ -9,7 +9,7 @@ import os
 import json
 import re
 import urllib3
-import sqlite3
+import paramiko
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:openflow@localhost/isp'
@@ -20,6 +20,7 @@ db = SQLAlchemy(app)
 auth = HTTPBasicAuth()
 
 controller_ip = '149.171.189.1'     #IP address of SDN controller
+dell_ovs_ip = '149.171.37.195'
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -187,6 +188,50 @@ def get_devices(handle):
                     matched_devices.append(add_device) 
     return make_response(json.dumps(matched_devices))
     
+################## QOS #################################
+@app.route('/residence/isp/api/v1.0/qos/<handle>', methods=['POST'])
+def set_qos_rules(handle):
+    qos = request.json['devices']
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(dell_ovs_ip,username='ubuntu',password='0p3nfl0w')
+    switch_tuple = User.query.filter_by(handle=handle).\
+               join(Customer, User.customer_id==Customer.customer_id).\
+               add_columns(Customer.switch_id).\
+               first()
+    setup = "sudo ovs-vsctl -- destroy QoS em1 -- clear Port em1 qos -- clear Port em3 qos \nsudo ovs-vsctl -- --all destroy QoS\nsudo ovs-vsctl -- --all destroy Queue\nsudo ovs-vsctl set port em1 qos=@newqos -- \\\n"
+    queues =    "-- --id=@newqos create qos other-config:max-rate=%s type=linux-htb queues=" % qos['maxrate']
+    queues = setup + queues
+    i = 0
+    q = []
+    for i in range(0,(len(qos['devices'])+1)):
+        q.append("%s=@q%s" % (i,i))
+        i += 1
+    q = ",".join(q)
+    queues += q
+    queues += " \\\n"
+    j = 0
+    queues += "-- --id=@q0 create queue other-config:max-rate=%s \\\n" % qos['default']
+    q = []
+    for j in range(0,i-1):      #creating device queues
+        q.append("-- --id=@q%s create queue other-config:max-rate=%s " % (j+1, qos['devices'][j]['rate']))
+    q = "\\\n".join(q)
+    queues += q
+    print queues
+    stdin,stdout,stderr = ssh.exec_command(queues)
+    i = 1
+    for device in qos['devices']:
+        #pushing permanent flows onto switch
+        command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=1:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+        result = os.popen(command).read()
+        #print command                          
+        command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=3:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+        result = os.popen(command).read()
+        i+=1
+    result = os.popen(command).read()
+    return str(stdout.readlines())
+
+
 ################## DOMAIN STATS ########################
 @app.route('/residence/isp/api/v1.0/domain', methods=['GET'])
 def get_domain_stats():
