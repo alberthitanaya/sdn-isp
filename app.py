@@ -222,11 +222,18 @@ def set_qos_rules(handle):
     i = 1
     for device in qos['devices']:
         #pushing permanent flows onto switch
-        command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=1:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
-        result = os.popen(command).read()
-        #print command                          
-        command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=3:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
-        result = os.popen(command).read()
+        if str(qos['devices']['mac']) == str(qos['devices']['priority']): #if it is the priority flow
+            command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"set-tos-bits\":\"0x58\", \"priority\":\"1\", \"actions\":\"enqueue=1:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+            result = os.popen(command).read()
+            #print command                          
+            command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"set-tos-bits\":\"0x58\", \"priority\":\"1\", \"actions\":\"enqueue=3:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+            result = os.popen(command).read()
+        else:   #regular flow
+            command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-ul\", \"src-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=1:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+            result = os.popen(command).read()
+            #print command                          
+            command = "curl -d '{\"switch\":\"%s\", \"name\":\"%s-dl\", \"dst-mac\":\"%s\", \"ether-type\":\"0x0800\", \"active\":\"true\", \"priority\":\"1\", \"actions\":\"enqueue=3:%s\"}' http://%s:8080/wm/staticflowentrypusher/json" % (switch_tuple.switch_id, device['mac'], device['mac'], i, controller_ip)
+            result = os.popen(command).read()
         i+=1
     result = os.popen(command).read()
     return str(stdout.readlines())
